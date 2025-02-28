@@ -1,17 +1,82 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
-import { Search, Plus, MoveVertical as MoreVertical } from 'lucide-react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Alert } from 'react-native';
+import { Search, Plus, MoveVertical as MoreVertical, Edit, Trash2 } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { supabase } from '../../../lib/supabase';
+import { Database } from '../../../lib/database.types';
 
-const mockUsers = [
-  { id: '1', name: 'John Doe', email: 'john@example.com', role: 'employee', status: 'active' },
-  { id: '2', name: 'Jane Smith', email: 'jane@example.com', role: 'client', status: 'active' },
-  { id: '3', name: 'Mike Johnson', email: 'mike@example.com', role: 'employee', status: 'inactive' },
-];
+type User = Database['public']['Tables']['users']['Row'] & {
+  status?: 'active' | 'inactive';
+};
 
 export default function Users() {
   const [searchQuery, setSearchQuery] = useState('');
+  const [users, setUsers] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const filteredUsers = mockUsers.filter(user => 
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+      
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      
+      // Add status field for UI purposes
+      const usersWithStatus = data?.map(user => ({
+        ...user,
+        status: 'active' as const
+      })) || [];
+      
+      setUsers(usersWithStatus);
+    } catch (error: any) {
+      console.error('Error fetching users:', error);
+      setError('Failed to load users');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    Alert.alert(
+      'Confirm Delete',
+      'Are you sure you want to delete this user?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { error } = await supabase
+                .from('users')
+                .delete()
+                .eq('id', userId);
+              
+              if (error) throw error;
+              
+              // Refresh the user list
+              fetchUsers();
+            } catch (error) {
+              console.error('Error deleting user:', error);
+              Alert.alert('Error', 'Failed to delete user');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const filteredUsers = users.filter(user => 
     user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     user.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -28,40 +93,79 @@ export default function Users() {
             onChangeText={setSearchQuery}
           />
         </View>
-        <TouchableOpacity style={styles.addButton}>
+        <TouchableOpacity 
+          style={styles.addButton}
+          onPress={() => router.push('/users/new')}
+        >
           <Plus size={20} color="#fff" />
           <Text style={styles.addButtonText}>Add User</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.userList}>
-        {filteredUsers.map(user => (
-          <View key={user.id} style={styles.userCard}>
-            <View style={styles.userInfo}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {user.name.split(' ').map(n => n[0]).join('')}
-                </Text>
-              </View>
-              <View style={styles.userDetails}>
-                <Text style={styles.userName}>{user.name}</Text>
-                <Text style={styles.userEmail}>{user.email}</Text>
-              </View>
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+        </View>
+      ) : error ? (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={fetchUsers}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <ScrollView style={styles.userList}>
+          {filteredUsers.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>
+                {searchQuery ? 'No users match your search' : 'No users found'}
+              </Text>
             </View>
-            <View style={styles.userMeta}>
-              <View style={[
-                styles.statusBadge,
-                { backgroundColor: user.status === 'active' ? '#34C759' : '#FF3B30' }
-              ]}>
-                <Text style={styles.statusText}>{user.status}</Text>
+          ) : (
+            filteredUsers.map(user => (
+              <View key={user.id} style={styles.userCard}>
+                <TouchableOpacity 
+                  style={styles.userInfo}
+                  onPress={() => router.push(`/users/${user.id}`)}
+                >
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>
+                      {user.name.split(' ').map(n => n[0]).join('')}
+                    </Text>
+                  </View>
+                  <View style={styles.userDetails}>
+                    <Text style={styles.userName}>{user.name}</Text>
+                    <Text style={styles.userEmail}>{user.email}</Text>
+                    <Text style={styles.userRole}>{user.role}</Text>
+                  </View>
+                </TouchableOpacity>
+                <View style={styles.userMeta}>
+                  <View style={[
+                    styles.statusBadge,
+                    { backgroundColor: user.status === 'active' ? '#34C759' : '#FF3B30' }
+                  ]}>
+                    <Text style={styles.statusText}>{user.status}</Text>
+                  </View>
+                  <View style={styles.actionButtons}>
+                    <TouchableOpacity 
+                      style={styles.actionButton}
+                      onPress={() => router.push(`/users/${user.id}`)}
+                    >
+                      <Edit size={18} color="#007AFF" />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={styles.actionButton}
+                      onPress={() => handleDeleteUser(user.id)}
+                    >
+                      <Trash2 size={18} color="#FF3B30" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </View>
-              <TouchableOpacity style={styles.moreButton}>
-                <MoreVertical size={20} color="#666" />
-              </TouchableOpacity>
-            </View>
-          </View>
-        ))}
-      </ScrollView>
+            ))
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -154,6 +258,18 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 2,
   },
+  userRole: {
+    fontSize: 12,
+    color: '#007AFF',
+    marginTop: 2,
+    textTransform: 'capitalize',
+    backgroundColor: '#007AFF15',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
   userMeta: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -170,7 +286,49 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'capitalize',
   },
-  moreButton: {
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionButton: {
     padding: 5,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 16,
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  emptyContainer: {
+    padding: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
   },
 });
